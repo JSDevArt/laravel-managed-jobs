@@ -1,5 +1,5 @@
 {
-    "name": "your-vendor/laravel-managed-jobs",
+    "name": "jsdevart/laravel-managed-jobs",
     "description": "Framework plug-and-play para background jobs con lifecycle tracking, progreso en tiempo real y manejo de archivos en Laravel.",
     "type": "library",
     "license": "MIT",
