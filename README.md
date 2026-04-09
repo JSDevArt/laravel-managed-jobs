@@ -19,8 +19,8 @@ You dispatch a job. The package:
 
 | | |
 |---|---|
-| PHP | ^8.2 |
-| Laravel | ^11.0 \| ^12.0 |
+| PHP | ^8.2 (usa PHP ^8.3 si instalas Laravel 13) |
+| Laravel | ^11.0 \| ^12.0 \| ^13.0 |
 
 ---
 
