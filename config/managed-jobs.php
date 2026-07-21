@@ -63,7 +63,13 @@ return [
     |                  broadcaster is bypassed.
     |
     | channel_prefix – String prepended to every channel name.
-    |                  Default 'jobs' produces:  jobs.{userId}  /  jobs.{tenantId}
+    |
+    | user_segment   – Segment identifying the owner-user channel.
+    | tenant_segment – Segment identifying the owner-tenant channel.
+    |                  The two segments MUST differ: they keep the numeric
+    |                  ids apart so a job's owner_user_id can never collide
+    |                  with another job's owner_tenant_id on the same channel.
+    |                  Defaults produce:  jobs-user.{userId}  /  jobs-tenant.{tenantId}
     |
     | channel_type   – One of: 'public', 'private', 'presence'
     |                  Maps to the matching Illuminate\Broadcasting\* class.
@@ -73,6 +79,8 @@ return [
     'broadcasting' => [
         'enabled'        => true,
         'channel_prefix' => 'jobs',
+        'user_segment'   => 'user',
+        'tenant_segment' => 'tenant',
         'channel_type'   => 'public',  // 'public' | 'private' | 'presence'
     ],
 

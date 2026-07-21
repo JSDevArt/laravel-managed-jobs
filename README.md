@@ -275,8 +275,14 @@ Route::middleware('auth')->prefix('jobs')->group(function () {
 
 All events broadcast via Laravel's broadcasting system to two channels:
 
-- `jobs.{owner_user_id}` — always
-- `jobs.{owner_tenant_id}` — only when `getManagedJobTenantId()` returns a non-null value
+- `jobs-user.{owner_user_id}` — always
+- `jobs-tenant.{owner_tenant_id}` — only when `getManagedJobTenantId()` returns a non-null value
+
+The user and tenant channels use distinct name segments on purpose: a job whose
+`owner_user_id` equals another job's `owner_tenant_id` still resolves to two
+different channels, so tenant events never leak onto a user's channel (or vice
+versa). The `user`/`tenant` segments are configurable via
+`broadcasting.user_segment` / `broadcasting.tenant_segment`.
 
 | Event | `broadcastAs` | When | Payload |
 |-------|---------------|------|---------|
@@ -289,7 +295,7 @@ All events broadcast via Laravel's broadcasting system to two channels:
 **Frontend example (Laravel Echo):**
 
 ```js
-Echo.channel(`jobs.${userId}`)
+Echo.channel(`jobs-user.${userId}`)
     .listen('.job.progress',  (e) => updateProgressBar(e.progress, e.progress_message))
     .listen('.job.completed', (e) => showDownloadButton(e.job_id))
     .listen('.job.failed',    (e) => showError(e.failed_reason));
@@ -371,7 +377,9 @@ return [
     // Broadcasting
     'broadcasting' => [
         'enabled'        => true,
-        'channel_prefix' => 'jobs',   // → jobs.{userId}
+        'channel_prefix' => 'jobs',   // → jobs-user.{userId} / jobs-tenant.{tenantId}
+        'user_segment'   => 'user',
+        'tenant_segment' => 'tenant',
         'channel_type'   => 'public', // 'public' | 'private' | 'presence'
     ],
 
@@ -427,8 +435,12 @@ Set `channel_type` to `'private'` and define the authorization rule in `routes/c
 'broadcasting' => ['channel_type' => 'private'],
 
 // routes/channels.php
-Broadcast::channel('jobs.{userId}', function ($user, $userId) {
+Broadcast::channel('jobs-user.{userId}', function ($user, $userId) {
     return (int) $user->id === (int) $userId;
+});
+
+Broadcast::channel('jobs-tenant.{tenantId}', function ($user, $tenantId) {
+    return (int) $user->getManagedJobTenantId() === (int) $tenantId;
 });
 ```
 
