@@ -4,28 +4,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | User Model
-    |--------------------------------------------------------------------------
-    |
-    | The Eloquent model used for job ownership. Must implement
-    | YourVendor\ManagedJobs\Contracts\JobOwner.
-    |
-    */
-    'user_model' => \App\Models\User::class,
-
-    /*
-    |--------------------------------------------------------------------------
-    | User Primary Key Column
-    |--------------------------------------------------------------------------
-    |
-    | The primary key column of your user model.
-    | Used by ManagedJob::owner() and ManagedJob::triggeredBy() relationships.
-    |
-    */
-    'user_primary_key' => 'id',
-
-    /*
-    |--------------------------------------------------------------------------
     | Default File Expiry
     |--------------------------------------------------------------------------
     |
@@ -58,22 +36,38 @@ return [
     | Broadcasting
     |--------------------------------------------------------------------------
     |
-    | enabled        – Set to false to disable WebSocket broadcasting entirely.
-    |                  Events are still fired for local listeners; only the
-    |                  broadcaster is bypassed.
+    | enabled            – Set to false to disable WebSocket broadcasting
+    |                      entirely. Events still fire for local listeners; only
+    |                      the broadcaster is bypassed.
     |
-    | channel_prefix – String prepended to every channel name.
-    |                  Default 'jobs' produces:  jobs.{userId}  /  jobs.{tenantId}
+    | resolver           – Class implementing
+    |                      YourVendor\ManagedJobs\Contracts\JobChannelResolver.
+    |                      Decides which channels a job's events broadcast on.
+    |                      Point this at your own class to add tenant / team /
+    |                      service channels or change the naming entirely — that
+    |                      is where app-specific channel policy belongs. The
+    |                      default broadcasts one channel scoped to the owner.
     |
-    | channel_type   – One of: 'public', 'private', 'presence'
-    |                  Maps to the matching Illuminate\Broadcasting\* class.
-    |                  Use 'private' or 'presence' for authenticated channels.
+    | channel_prefix     – String prepended to every channel name (default resolver).
+    |
+    | include_owner_type – When true (default) the owner type is baked into the
+    |                      channel name: jobs.user.5 / jobs.tenant.5. This makes
+    |                      it impossible for two owners of different types to
+    |                      collide on the same channel.
+    |                      Set to false for v1-style flat names (jobs.5) — ONLY
+    |                      safe when every job is owned by a single owner type.
+    |
+    | channel_type       – One of: 'public', 'private', 'presence'. Maps to the
+    |                      matching Illuminate\Broadcasting\* class. Use 'private'
+    |                      or 'presence' for authenticated channels.
     |
     */
     'broadcasting' => [
-        'enabled'        => true,
-        'channel_prefix' => 'jobs',
-        'channel_type'   => 'public',  // 'public' | 'private' | 'presence'
+        'enabled'            => true,
+        'resolver'           => \YourVendor\ManagedJobs\Support\DefaultJobChannelResolver::class,
+        'channel_prefix'     => 'jobs',
+        'include_owner_type' => true,
+        'channel_type'       => 'public',  // 'public' | 'private' | 'presence'
     ],
 
     /*

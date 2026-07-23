@@ -5,6 +5,8 @@ namespace YourVendor\ManagedJobs;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\ServiceProvider;
 use YourVendor\ManagedJobs\Console\Commands\ExpireJobFilesCommand;
+use YourVendor\ManagedJobs\Contracts\JobChannelResolver;
+use YourVendor\ManagedJobs\Support\DefaultJobChannelResolver;
 
 class ManagedJobsServiceProvider extends ServiceProvider
 {
@@ -14,6 +16,22 @@ class ManagedJobsServiceProvider extends ServiceProvider
             __DIR__ . '/../config/managed-jobs.php',
             'managed-jobs',
         );
+
+        $this->registerChannelResolver();
+    }
+
+    /**
+     * Bind the channel resolver. Apps override the whole channel policy by
+     * pointing config('managed-jobs.broadcasting.resolver') at their own
+     * JobChannelResolver implementation; otherwise the safe default is used.
+     */
+    private function registerChannelResolver(): void
+    {
+        $this->app->bind(JobChannelResolver::class, function ($app) {
+            $class = config('managed-jobs.broadcasting.resolver', DefaultJobChannelResolver::class);
+
+            return $app->make($class);
+        });
     }
 
     public function boot(): void
@@ -40,6 +58,13 @@ class ManagedJobsServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__ . '/../database/migrations' => database_path('migrations'),
         ], 'managed-jobs-migrations');
+
+        // v1 → v2 upgrade migration. Opt-in (publish + edit + migrate); NOT
+        // loaded automatically because it rewrites existing columns and needs
+        // the app to confirm the owner backfill first. See UPGRADE.md.
+        $this->publishes([
+            __DIR__ . '/../database/upgrades' => database_path('migrations'),
+        ], 'managed-jobs-upgrades');
     }
 
     private function registerCommands(): void

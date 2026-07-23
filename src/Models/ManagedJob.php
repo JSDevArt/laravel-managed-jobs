@@ -2,9 +2,10 @@
 
 namespace YourVendor\ManagedJobs\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use YourVendor\ManagedJobs\Enums\JobStatusEnum;
 
@@ -26,9 +27,10 @@ class ManagedJob extends Model
         'state',
         'progress_percentage',
         'progress_message',
-        'owner_user_id',
-        'owner_tenant_id',
-        'triggered_by_user_id',
+        'owner_type',
+        'owner_id',
+        'triggered_by_type',
+        'triggered_by_id',
         'started_at',
         'finished_at',
         'failed_reason',
@@ -44,32 +46,39 @@ class ManagedJob extends Model
     ];
 
     /**
-     * The user who owns this job.
-     * Resolved from config('managed-jobs.user_model').
+     * The model that owns this job (any Eloquent model — user, tenant, service…).
+     *
+     * Resolved polymorphically from owner_type / owner_id, so the package stays
+     * agnostic about what an "owner" is. Register a morph map in your app to
+     * store short aliases ('user', 'service') instead of full class names.
      */
-    public function owner(): BelongsTo
+    public function owner(): MorphTo
     {
-        return $this->belongsTo(
-            config('managed-jobs.user_model'),
-            'owner_user_id',
-            config('managed-jobs.user_primary_key', 'id'),
-        );
+        return $this->morphTo();
     }
 
     /**
-     * The user who triggered this job (e.g. an admin acting on behalf of the owner).
+     * The model that triggered this job (e.g. an admin acting on behalf of the
+     * owner). Also polymorphic; null when the owner triggered it themselves.
      */
-    public function triggeredBy(): BelongsTo
+    public function triggeredBy(): MorphTo
     {
-        return $this->belongsTo(
-            config('managed-jobs.user_model'),
-            'triggered_by_user_id',
-            config('managed-jobs.user_primary_key', 'id'),
-        );
+        return $this->morphTo();
     }
 
     public function files(): HasMany
     {
         return $this->hasMany(ManagedJobFile::class, 'job_id', $this->getKeyName());
+    }
+
+    /**
+     * Scope jobs to those owned by the given model.
+     *
+     * Replaces the v1 `where('owner_user_id', $user->getManagedJobOwnerId())`
+     * idiom: ManagedJob::ownedBy($request->user())->get().
+     */
+    public function scopeOwnedBy(Builder $query, Model $owner): Builder
+    {
+        return $query->whereMorphedTo('owner', $owner);
     }
 }
