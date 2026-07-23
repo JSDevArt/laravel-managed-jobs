@@ -3,38 +3,21 @@
 namespace YourVendor\ManagedJobs\Contracts;
 
 /**
- * Contract that the application's User model must implement.
+ * Optional marker interface for a model that can own a managed job.
  *
- * This allows the package to remain agnostic of your User model's
- * column names and tenant structure.
+ * As of v2 the package identifies owners polymorphically (owner_type /
+ * owner_id), so ANY Eloquent model can own a job. Implementing this interface
+ * is therefore optional and carries no required methods — it exists only to let
+ * you express intent, and so that v1 `implements JobOwner` declarations keep
+ * compiling after upgrading.
  *
- * Minimal implementation example:
+ * v1 required getManagedJobOwnerId() and getManagedJobTenantId(). Those are no
+ * longer used by the package: pass the owner model itself to
+ * JobRunner::dispatch() and the package reads $owner->getMorphClass() /
+ * $owner->getKey(). You may keep the old methods on your model or remove them.
  *
- *   class User extends Authenticatable implements JobOwner
- *   {
- *       public function getManagedJobOwnerId(): int|string
- *       {
- *           return $this->id; // or $this->user_id, etc.
- *       }
- *
- *       public function getManagedJobTenantId(): int|string|null
- *       {
- *           return null; // or $this->tenant_id for multi-tenant apps
- *       }
- *   }
+ * @deprecated since 2.0 — no longer required; pass any Eloquent model as the owner.
  */
 interface JobOwner
 {
-    /**
-     * The identifier stored in managed_jobs.owner_user_id.
-     * Must match what the controller uses to scope job queries.
-     */
-    public function getManagedJobOwnerId(): int|string;
-
-    /**
-     * Optional tenant identifier stored in managed_jobs.owner_tenant_id.
-     * Used to broadcast events to a tenant-wide channel.
-     * Return null if your app is not multi-tenant.
-     */
-    public function getManagedJobTenantId(): int|string|null;
 }

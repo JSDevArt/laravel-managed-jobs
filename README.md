@@ -27,7 +27,7 @@ You dispatch a job. The package:
 ## Installation
 
 ```bash
-composer require your-vendor/laravel-managed-jobs
+composer require jsdevart/laravel-managed-jobs
 php artisan migrate
 ```
 
@@ -41,28 +41,34 @@ php artisan vendor:publish --tag=managed-jobs-config
 
 ## Minimal implementation
 
-This section walks through the four things you need to write in your app.
+This section walks through wiring the package into your app — one decision (who
+owns a job) and three pieces of code (payload, job, dispatch).
 
-### 1. Tell the package who owns a job
+### 1. Decide who owns a job
 
-Implement `JobOwner` on your `User` model. The package uses this to scope jobs per user (and optionally per tenant).
+Nothing to implement. A job's owner is **any Eloquent model** — a `User`, a
+`Team`, a `Tenant`, a `Service` — stored polymorphically (`owner_type` /
+`owner_id`). You just pass the model to `JobRunner::dispatch()` (step 4) and read
+it back with `$job->owner`.
+
+Optionally register a [morph map](https://laravel.com/docs/eloquent-relationships#custom-polymorphic-types)
+so the database stores short, stable aliases instead of full class names (this
+also keeps broadcast channel names tidy — `jobs.user.5` instead of
+`jobs.app_models_user.5`):
 
 ```php
-use YourVendor\ManagedJobs\Contracts\JobOwner;
+// AppServiceProvider::boot()
+use Illuminate\Database\Eloquent\Relations\Relation;
 
-class User extends Authenticatable implements JobOwner
-{
-    public function getManagedJobOwnerId(): int|string
-    {
-        return $this->id;
-    }
-
-    public function getManagedJobTenantId(): int|string|null
-    {
-        return null; // return $this->tenant_id for multi-tenant apps
-    }
-}
+Relation::enforceMorphMap([
+    'user'    => \App\Models\User::class,
+    'tenant'  => \App\Models\Tenant::class,
+    'service' => \App\Models\Service::class,
+]);
 ```
+
+> **Upgrading from v1?** The old `JobOwner` interface (`getManagedJobOwnerId()` /
+> `getManagedJobTenantId()`) is no longer required — see [UPGRADE.md](UPGRADE.md).
 
 ### 2. Define the job's input
 
@@ -192,7 +198,7 @@ Route::middleware('auth')->prefix('jobs')->group(function () {
 
     // List the authenticated user's jobs
     Route::get('/', function (Request $request) {
-        return ManagedJob::where('owner_user_id', $request->user()->getManagedJobOwnerId())
+        return ManagedJob::ownedBy($request->user())
             ->latest()
             ->paginate();
     });
@@ -215,7 +221,7 @@ Route::middleware('auth')->prefix('jobs')->group(function () {
     // Stop a running/pending job
     Route::delete('/{jobId}', function (Request $request, string $jobId) {
         $job = ManagedJob::where('job_id', $jobId)
-            ->where('owner_user_id', $request->user()->getManagedJobOwnerId())
+            ->ownedBy($request->user())
             ->firstOrFail();
 
         $job->update(['status' => JobStatusEnum::STOPPED]);
@@ -225,7 +231,7 @@ Route::middleware('auth')->prefix('jobs')->group(function () {
     // Retry a failed or stopped job
     Route::post('/{jobId}/retry', function (Request $request, string $jobId) {
         $job = ManagedJob::where('job_id', $jobId)
-            ->where('owner_user_id', $request->user()->getManagedJobOwnerId())
+            ->ownedBy($request->user())
             ->firstOrFail();
 
         $job->update([
@@ -243,7 +249,7 @@ Route::middleware('auth')->prefix('jobs')->group(function () {
     // List non-expired files for a job
     Route::get('/{jobId}/files', function (Request $request, string $jobId) {
         $job = ManagedJob::where('job_id', $jobId)
-            ->where('owner_user_id', $request->user()->getManagedJobOwnerId())
+            ->ownedBy($request->user())
             ->firstOrFail();
 
         return $job->files()->where('expires_at', '>', now())->get();
@@ -252,7 +258,7 @@ Route::middleware('auth')->prefix('jobs')->group(function () {
     // Download a file
     Route::get('/{jobId}/files/{fileId}/download', function (Request $request, string $jobId, string $fileId) {
         $job  = ManagedJob::where('job_id', $jobId)
-            ->where('owner_user_id', $request->user()->getManagedJobOwnerId())
+            ->ownedBy($request->user())
             ->firstOrFail();
 
         $file = $job->files()
@@ -273,10 +279,23 @@ Route::middleware('auth')->prefix('jobs')->group(function () {
 
 ## Real-time broadcasting
 
-All events broadcast via Laravel's broadcasting system to two channels:
+By default every event broadcasts on a single channel scoped to the job's owner:
 
-- `jobs.{owner_user_id}` — always
-- `jobs.{owner_tenant_id}` — only when `getManagedJobTenantId()` returns a non-null value
+- `jobs.{ownerType}.{ownerId}` — e.g. `jobs.user.5`, `jobs.tenant.9`, `jobs.service.12`
+
+The owner **type** is part of the channel name, so owners of different types no
+longer collide even when their ids match (a `user 7` job and a `tenant 7` job
+resolve to `jobs.user.7` and `jobs.tenant.7`). `ownerType` is the morph-map alias
+when you register one, otherwise a snake_case of the class name — so
+**registering a [morph map](#1-decide-who-owns-a-job) is recommended** to give
+every type a distinct, stable alias (two classes sharing a basename would
+otherwise collapse to the same segment).
+
+Need to broadcast somewhere else — a tenant-wide channel, a team channel, several
+channels at once? That is application policy, so the package hands it to you: see
+[Custom channel policy](#custom-channel-policy) below. To keep the flat v1-style
+name (`jobs.{id}`), set `broadcasting.include_owner_type` to `false` — only safe
+when every job is owned by a single owner type.
 
 | Event | `broadcastAs` | When | Payload |
 |-------|---------------|------|---------|
@@ -289,7 +308,7 @@ All events broadcast via Laravel's broadcasting system to two channels:
 **Frontend example (Laravel Echo):**
 
 ```js
-Echo.channel(`jobs.${userId}`)
+Echo.channel(`jobs.user.${userId}`)
     .listen('.job.progress',  (e) => updateProgressBar(e.progress, e.progress_message))
     .listen('.job.completed', (e) => showDownloadButton(e.job_id))
     .listen('.job.failed',    (e) => showError(e.failed_reason));
@@ -357,10 +376,6 @@ Full reference after publishing with `php artisan vendor:publish --tag=managed-j
 
 ```php
 return [
-    // Your User model — must implement JobOwner
-    'user_model'       => \App\Models\User::class,
-    'user_primary_key' => 'id',
-
     // Days before job-generated files expire (default: 3)
     'file_expiry_days' => 3,
 
@@ -370,9 +385,13 @@ return [
 
     // Broadcasting
     'broadcasting' => [
-        'enabled'        => true,
-        'channel_prefix' => 'jobs',   // → jobs.{userId}
-        'channel_type'   => 'public', // 'public' | 'private' | 'presence'
+        'enabled'            => true,
+        // Channel policy. Swap for your own JobChannelResolver to control
+        // exactly which channels events broadcast on (tenant, team, service…).
+        'resolver'           => \YourVendor\ManagedJobs\Support\DefaultJobChannelResolver::class,
+        'channel_prefix'     => 'jobs',   // → jobs.{ownerType}.{ownerId}
+        'include_owner_type' => true,     // false → v1-style jobs.{id} (single owner type only)
+        'channel_type'       => 'public', // 'public' | 'private' | 'presence'
     ],
 
     // Queue settings applied to all managed jobs
@@ -426,11 +445,54 @@ Set `channel_type` to `'private'` and define the authorization rule in `routes/c
 // config/managed-jobs.php
 'broadcasting' => ['channel_type' => 'private'],
 
-// routes/channels.php
-Broadcast::channel('jobs.{userId}', function ($user, $userId) {
+// routes/channels.php — matches the default jobs.{ownerType}.{ownerId} name
+Broadcast::channel('jobs.user.{userId}', function ($user, $userId) {
     return (int) $user->id === (int) $userId;
 });
 ```
+
+### Custom channel policy
+
+Where events broadcast is application policy, so the package lets you own it.
+Implement `JobChannelResolver` and point the config at your class — this is the
+supported way to broadcast to a tenant, a team, several channels at once, or with
+any naming you like, without patching the package:
+
+```php
+namespace App\ManagedJobs;
+
+use Illuminate\Broadcasting\PrivateChannel;
+use YourVendor\ManagedJobs\Contracts\JobChannelResolver;
+use YourVendor\ManagedJobs\Models\ManagedJob;
+
+class TenantChannelResolver implements JobChannelResolver
+{
+    public function channelsFor(ManagedJob $job): array
+    {
+        if (! config('managed-jobs.broadcasting.enabled', true)) {
+            return [];
+        }
+
+        $channels = [new PrivateChannel("jobs.user.{$job->owner_id}")];
+
+        // Broadcast to a tenant-wide channel too, derived from the owner.
+        if ($tenantId = $job->owner?->tenant_id) {
+            $channels[] = new PrivateChannel("jobs.tenant.{$tenantId}");
+        }
+
+        return $channels;
+    }
+}
+```
+
+```php
+// config/managed-jobs.php
+'broadcasting' => [
+    'resolver' => \App\ManagedJobs\TenantChannelResolver::class,
+],
+```
+
+Authorize each channel your resolver emits in `routes/channels.php`.
 
 ### Per-dispatch queue override
 
@@ -459,9 +521,10 @@ JobRunner::dispatch(
 | `state` | JSON | Checkpoint for fault-tolerant retries |
 | `progress_percentage` | TINYINT | 0–100 |
 | `progress_message` | VARCHAR | Current step description |
-| `owner_user_id` | BIGINT | Who owns the job |
-| `owner_tenant_id` | BIGINT | Tenant scope (nullable) |
-| `triggered_by_user_id` | BIGINT | Admin acting on behalf (nullable) |
+| `owner_type` | VARCHAR | Owner model class / morph alias |
+| `owner_id` | VARCHAR | Owner key (int or ULID/UUID) |
+| `triggered_by_type` | VARCHAR | Actor model class / morph alias (nullable) |
+| `triggered_by_id` | VARCHAR | Actor key (nullable) |
 | `started_at` | TIMESTAMP | Worker pick-up time |
 | `finished_at` | TIMESTAMP | Completion / failure time |
 | `failed_reason` | TEXT | Exception message on failure |
